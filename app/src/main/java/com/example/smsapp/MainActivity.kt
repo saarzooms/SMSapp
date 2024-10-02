@@ -1,23 +1,28 @@
 package com.example.smsapp
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.telephony.SmsManager
+import android.telephony.SubscriptionManager
+import android.telephony.SubscriptionInfo
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Spinner
 import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
 
     private val SMS_PERMISSION_CODE = 101
     private val TEXT_LIMIT = 160  // Set your desired text limit
+    private lateinit var subscriptionManager: SubscriptionManager
+    private var simList: List<SubscriptionInfo> = listOf()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -25,7 +30,13 @@ class MainActivity : AppCompatActivity() {
 
         val phoneNumberEditText = findViewById<EditText>(R.id.phoneNumberEditText)
         val messageEditText = findViewById<EditText>(R.id.messageEditText)
+        val simSpinner = findViewById<Spinner>(R.id.simSpinner)
         val sendButton = findViewById<Button>(R.id.sendButton)
+
+        subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+
+        // Load available SIMs into the spinner
+        loadSimOptions(simSpinner)
 
         sendButton.setOnClickListener {
             val phoneNumber = phoneNumberEditText.text.toString().trim()
@@ -46,14 +57,46 @@ class MainActivity : AppCompatActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), SMS_PERMISSION_CODE)
             } else {
-                sendSMS(phoneNumber, message)
+                // Get the selected SIM
+                val selectedSimIndex = simSpinner.selectedItemPosition
+                if (simList.isNotEmpty()) {
+                    val subscriptionId = simList[selectedSimIndex].subscriptionId
+                    sendSMS(phoneNumber, message, subscriptionId)
+                } else {
+                    Toast.makeText(this, "No SIM cards available", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
-    private fun sendSMS(phoneNumber: String, message: String) {
+    private fun loadSimOptions(simSpinner: Spinner) {
+        // Check permission to read SIM cards
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_PHONE_STATE), SMS_PERMISSION_CODE)
+        } else {
+            // Get available SIMs
+            simList = subscriptionManager.activeSubscriptionInfoList ?: listOf()
+
+            if (simList.isNotEmpty()) {
+                val simNames = simList.map { it.displayName.toString() }
+                val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, simNames)
+                adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                simSpinner.adapter = adapter
+            } else {
+                Toast.makeText(this, "No SIM cards found", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun sendSMS(phoneNumber: String, message: String, subscriptionId: Int) {
         try {
-            val smsManager = SmsManager.getDefault()
+            // Use the SmsManager for the specific SIM (subscriptionId)
+            val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                getSystemService(SmsManager::class.java).createForSubscriptionId(subscriptionId)
+            } else {
+                SmsManager.getSmsManagerForSubscriptionId(subscriptionId)
+            }
+
             smsManager.sendTextMessage(phoneNumber, null, message, null, null)
             Toast.makeText(this, "SMS sent successfully", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
